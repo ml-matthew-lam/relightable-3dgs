@@ -1,0 +1,16 @@
+# Blender
+*.blend1
+*.blend2
+
+# Dataset (stored in Google Drive, not in the repo)
+checkered_suzanne/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+
