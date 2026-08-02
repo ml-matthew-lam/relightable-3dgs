@@ -16,43 +16,17 @@ from gsplat import rasterization
 # ---------------------------------------------------------------------------
 def parse_args():
     p = argparse.ArgumentParser(description="Baseline vanilla 3DGS training on one light group.")
-    p.add_argument("--data_dir", type=str, default="checkered_suzanne",
-                    help="Path to the dataset root (the folder containing train/ and test/).")
-    p.add_argument("--light", type=int, default=1, choices=[1, 2, 3, 4],
-                    help="Which train/lightN/ group to train on. Per CLAUDE.md, do NOT mix "
-                         "multiple lights into one vanilla-SH run.")
-    p.add_argument("--held_out", type=int, default=15,
-                    help="Number of views held out from the END of this light's 100-view list "
-                         "for same-light novel-view PSNR eval. Frame order is not spatially "
-                         "sorted (random camera seed per light group, verified against the "
-                         "actual transforms.json), so a contiguous tail block gives the same "
-                         "view-coverage spread as a random subset would.")
-    p.add_argument("--downsample", type=int, default=2,
-                    help="Integer factor to shrink images by (e.g. 2 = half resolution). "
-                         "EXR native res is 1400x1400 / PNG matches; full res is unnecessarily "
-                         "slow for a plumbing sanity check. Camera intrinsics are rebuilt from "
-                         "the downsampled resolution directly (FOV is resolution-independent), "
-                         "so no separate intrinsics-scaling math is needed.")
-    p.add_argument("--num_init_points", type=int, default=20000,
-                    help="How many Gaussians to randomly initialize. No adaptive densification "
-                         "yet (see module docstring), so this is the Gaussian count for the "
-                         "entire run — set high enough to have a chance at resolving detail.")
-    p.add_argument("--scene_extent", type=float, default=1.5,
-                    help="Half-width (in world units) of the cube that random init points are "
-                         "sampled from, centered at the origin. ASSUMPTION, not measured: "
-                         "default Blender Suzanne spans roughly +/-1.2 units unscaled. Sanity "
-                         "check this against your actual Blender scene scale before trusting it.")
-    p.add_argument("--iters", type=int, default=7000,
-                    help="Total optimization steps.")
+    p.add_argument("--data_dir", type=str, default="checkered_suzanne")
+    p.add_argument("--light", type=int, default=1, choices=[1, 2, 3, 4])
+    p.add_argument("--held_out", type=int, default=15)
+    p.add_argument("--downsample", type=int, default=2)
+    p.add_argument("--num_init_points", type=int, default=20000)
+    p.add_argument("--scene_extent", type=float, default=1.5)
+    p.add_argument("--iters", type=int, default=7000)
     p.add_argument("--eval_every", type=int, default=500)
-    p.add_argument("--ckpt_every", type=int, default=500,
-                    help="Colab sessions can disconnect any time (idle timeout / hard runtime "
-                         "cap) — checkpoint frequently enough that a disconnect doesn't cost "
-                         "much progress.")
+    p.add_argument("--ckpt_every", type=int, default=500)
     p.add_argument("--ckpt_dir", type=str, default="checkpoints/light1_baseline")
-    p.add_argument("--resume", action="store_true",
-                    help="If set, load the latest checkpoint in --ckpt_dir and continue instead "
-                         "of starting fresh.")
+    p.add_argument("--resume", action="store_true")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()
@@ -151,19 +125,43 @@ def init_gaussians(num_points, scene_extent, device):
     # colors: SH degree 0 only, stored as raw logits;
     # sigmoid applied at render time to clamp values to [0, 1] RGB; 
     # random init so that different Gaussians start out visually distinguishable
-    color_logits = torch.randn(num_points, 3, device=device) * 0.1
+    albedo_logits = torch.randn(num_points, 3, device=device) * 0.1
+    roughness_logits = torch.zeros(num_points, 1, device=device)
 
     params = {
         "means": means,
         "log_scales": log_scales,
         "quats": quats,
         "opacity_logits": opacity_logits,
-        "color_logits": color_logits,
+        "albedo_logits": albedo_logits,
+        "roughness_logits": roughness_logits
     }
     for v in params.values():
         v.requires_grad_(True)
     return params
 
+# ---------------------------------------------------------------------------
+# Computation of Normals 
+# ---------------------------------------------------------------------------
+
+def quat_to_matrix(quats):
+    quats = quats / quats.norm(dim=-1, keepdim=True)
+    w, x, y, z = quats.unbind(-1)
+    res = torch.stack([
+        torch.stack([1-2*(y*y+z*z), 2*(x*y-w*z),   2*(x*z+w*y)],   dim=-1),
+        torch.stack([2*(x*y+w*z),   1-2*(x*x+z*z), 2*(y*z-w*x)],   dim=-1),
+        torch.stack([2*(x*z-w*y),   2*(y*z+w*x),   1-2*(x*x+y*y)], dim=-1),
+    ], dim=-2)
+    return res
+
+def compute_normals(means, log_scales, quats, camera_pos):
+    R = quat_to_matrix(quats)
+    flat_axis_idx = torch.argmin(log_scales, dim=-1)
+    normals = torch.gather(R, 2, flat_axis_idx.view(-1,1,1).expand(-1,3,1)).squeeze(-1)
+    mean_to_camera = camera_pos - means
+    flip = torch.sign((normals*mean_to_camera).sum(-1, keepdim=True))
+    flip = torch.where(flip == 0, torch.ones_like(flip), flip)
+    return normals*flip
 
 def make_optimizer(params):
     # Per-parameter learning rates following the defaults from the 
@@ -173,7 +171,8 @@ def make_optimizer(params):
         {"params": [params["log_scales"]], "lr": 5e-3, "name": "log_scales"},
         {"params": [params["quats"]], "lr": 1e-3, "name": "quats"},
         {"params": [params["opacity_logits"]], "lr": 5e-2, "name": "opacity_logits"},
-        {"params": [params["color_logits"]], "lr": 2.5e-3, "name": "color_logits"},
+        {"params": [params["albedo_logits"]], "lr": 2.5e-3, "name": "albedo_logits"},
+        {"params": [params["roughness_logits"]], "lr": 2.5e-3, "name": "roughness_logits"},
     ])
 
 
@@ -183,7 +182,9 @@ def render(params, view, device):
     scales = torch.exp(params["log_scales"])
     quats = params["quats"]
     opacities = torch.sigmoid(params["opacity_logits"])
-    colors = torch.sigmoid(params["color_logits"])
+    colors = torch.sigmoid(params["albedo_logits"])
+    camera_pos = torch.inverse(view["viewmat"])[:3, 3].to(device)
+    normals = compute_normals(means, params["log_scales"], quats, camera_pos)
 
     # rasterization() supports batched cameras via a leading dim; we only
     # have one camera per call, so add a size-1 batch dim and squeeze after

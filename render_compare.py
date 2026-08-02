@@ -1,18 +1,3 @@
-"""
-Visual sanity check for a trained checkpoint from train.py.
-
-PSNR alone can hide problems (e.g. a blurry "average color" reconstruction
-can still score decently on a simple scene without geometry actually being
-right). This script renders held-out views (plus one training view, for
-reference) from a checkpoint and saves them next to their ground-truth
-images so you can actually look at them side by side.
-
-Reuses load_split()/render() from train.py directly rather than
-reimplementing the camera/rasterization logic a second time — same code
-path as training, so what you're looking at is exactly what the loss was
-computed on.
-"""
-
 import argparse
 import os
 
@@ -27,17 +12,10 @@ def parse_args():
     p = argparse.ArgumentParser(description="Render + compare a checkpoint against ground truth.")
     p.add_argument("--data_dir", type=str, default="checkered_suzanne")
     p.add_argument("--light", type=int, default=1, choices=[1, 2, 3, 4])
-    p.add_argument("--held_out", type=int, default=15,
-                    help="Must match what the checkpoint was trained with, so the held-out split "
-                         "lines up with views the model never saw.")
-    p.add_argument("--downsample", type=int, default=2,
-                    help="Must match the training run's --downsample — camera intrinsics are "
-                         "resolution-dependent, so a mismatch here would render at a size the "
-                         "checkpoint wasn't optimized for.")
+    p.add_argument("--held_out", type=int, default=15,)
+    p.add_argument("--downsample", type=int, default=2)
     p.add_argument("--ckpt", type=str, required=True, help="Path to a specific step_XXXXXX.pt file.")
-    p.add_argument("--num_held_out", type=int, default=5,
-                    help="How many held-out views to render (out of --held_out total). Default 5 "
-                         "is enough to eyeball, doesn't need to be all 15.")
+    p.add_argument("--num_held_out", type=int, default=5)
     p.add_argument("--out_dir", type=str, default="render_compare_out")
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()
