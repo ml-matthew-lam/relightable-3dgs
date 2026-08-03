@@ -73,7 +73,7 @@ def save_side_by_side(pred, target, path):
 def main():
     args = parse_args()
     device = torch.device(args.device)
-    out_dir = os.path.join(args.out_dir, args.render_type)
+    out_dir = args.out_dir
     os.makedirs(out_dir, exist_ok=True)
     render_type_to_fcn = {"beauty": render, "normals": render_normals}
     render_fcn = render_type_to_fcn[args.render_type]
