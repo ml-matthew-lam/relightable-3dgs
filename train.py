@@ -15,7 +15,7 @@ from gsplat import rasterization
 # CLI arguments
 # ---------------------------------------------------------------------------
 def parse_args():
-    p = argparse.ArgumentParser(description="Baseline vanilla 3DGS training on one light group.")
+    p = argparse.ArgumentParser()
     p.add_argument("--data_dir", type=str, default="checkered_suzanne")
     p.add_argument("--light", type=int, default=1, choices=[1, 2, 3, 4])
     p.add_argument("--held_out", type=int, default=15)
@@ -91,6 +91,7 @@ def load_split(data_dir, light, downsample):
             "Ks": Ks,
             "width": width,
             "height": height,
+            "img_name": img_name,  # e.g. "0001.png" -- used to locate the matching EXR for GT AOVs
         })
     return views
 
@@ -102,29 +103,15 @@ def init_gaussians(num_points, scene_extent, device):
     # means: uniform random points in a cube centered at the origin
     means = (torch.rand(num_points, 3, device=device) * 2 - 1) * scene_extent
 
-    # scales: stored as log-scale so exp(log_scales) is always positive;
-    # initialized from the average nearest-neighbor spacing of the random
-    # points, so Gaussians start out roughly touching
-    # their neighbors rather than either invisibly tiny or overlapping into
-    # a solid blob
     avg_spacing = (2 * scene_extent) / (num_points ** (1 / 3))
     log_scales = torch.full((num_points, 3), math.log(avg_spacing), device=device)
 
-    # quats: identity rotation (w, x, y, z) = (1, 0, 0, 0) for every Gaussian;
-    # not normalized to unit length here because normalization happens
-    # at render time so the optimizer can move freely in raw parameter space
     quats = torch.zeros(num_points, 4, device=device)
     quats[:, 0] = 1.0
 
-    # opacities: stored as logits so sigmoid(opacity_logits) is in (0, 1);
-    # initialized to a relatively low starting opacity (~0.1) -- otherwise,
-    # a few big Gaussians may dominate the loss early and get stuck
     init_opacity = 0.1
     opacity_logits = torch.full((num_points,), math.log(init_opacity / (1 - init_opacity)), device=device)
 
-    # colors: SH degree 0 only, stored as raw logits;
-    # sigmoid applied at render time to clamp values to [0, 1] RGB; 
-    # random init so that different Gaussians start out visually distinguishable
     albedo_logits = torch.randn(num_points, 3, device=device) * 0.1
     roughness_logits = torch.zeros(num_points, 1, device=device)
 
@@ -194,6 +181,32 @@ def render(params, view, device):
         scales=scales,
         opacities=opacities,
         colors=colors,
+        viewmats=view["viewmat"].unsqueeze(0).to(device),
+        Ks=view["Ks"].unsqueeze(0).to(device),
+        width=view["width"],
+        height=view["height"],
+        sh_degree=None,  # no SH evaluation -- colors are used directly as final RGB
+    )
+    return render_colors[0]
+
+def render_normals(params, view, device):
+    """Runs one forward pass through gsplat's rasterizer for a single view."""
+    means = params["means"]
+    scales = torch.exp(params["log_scales"])
+    quats = params["quats"]
+    opacities = torch.sigmoid(params["opacity_logits"])
+    camera_pos = torch.inverse(view["viewmat"])[:3, 3].to(device)
+    normals = compute_normals(means, params["log_scales"], quats, camera_pos)
+    normal_colors = (normals+1)/2
+
+    # rasterization() supports batched cameras via a leading dim; we only
+    # have one camera per call, so add a size-1 batch dim and squeeze after
+    render_colors, render_alphas, _meta = rasterization(
+        means=means,
+        quats=quats,
+        scales=scales,
+        opacities=opacities,
+        colors=normal_colors,
         viewmats=view["viewmat"].unsqueeze(0).to(device),
         Ks=view["Ks"].unsqueeze(0).to(device),
         width=view["width"],
@@ -279,7 +292,7 @@ def main():
         pred = render(params, view, device)
         target = view["image"].to(device)
 
-        loss = torch.abs(pred - target).mean()  # plain L1 -- to be updated later
+        loss = torch.abs(pred - target).mean()  # plain L1 (to be updated later)
 
         optimizer.zero_grad()
         loss.backward()
