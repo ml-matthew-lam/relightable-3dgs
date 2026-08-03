@@ -73,7 +73,8 @@ def save_side_by_side(pred, target, path):
 def main():
     args = parse_args()
     device = torch.device(args.device)
-    os.makedirs(args.out_dir, exist_ok=True)
+    out_dir = os.path.join(args.out_dir, args.render_type)
+    os.makedirs(out_dir, exist_ok=True)
     render_type_to_fcn = {"beauty": render, "normals": render_normals}
     render_fcn = render_type_to_fcn[args.render_type]
 
@@ -92,9 +93,9 @@ def main():
         pred = render_fcn(params, train_view, device)
         target = load_target(args, train_view, device)
         train_psnr = psnr(pred, target).item()
-        save_side_by_side(pred, target, os.path.join(args.out_dir, "train_view_0000.png"))
+        save_side_by_side(pred, target, os.path.join(out_dir, "train_view_0000.png"))
         print(f"[render] train view 0: PSNR={train_psnr:.2f} dB "
-              f"-> {args.out_dir}/train_view_0000.png")
+              f"-> {out_dir}/train_view_0000.png")
 
         held_out_psnrs = []
         for i, view in enumerate(held_out_views[:args.num_held_out]):
@@ -102,7 +103,7 @@ def main():
             target = load_target(args, view, device)
             view_psnr = psnr(pred, target).item()
             held_out_psnrs.append(view_psnr)
-            out_path = os.path.join(args.out_dir, f"held_out_view_{i:04d}.png")
+            out_path = os.path.join(out_dir, f"held_out_view_{i:04d}.png")
             save_side_by_side(pred, target, out_path)
             print(f"[render] held-out view {i}: PSNR={view_psnr:.2f} dB -> {out_path}")
 
