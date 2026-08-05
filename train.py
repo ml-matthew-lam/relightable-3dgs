@@ -5,6 +5,7 @@ import os
 import random
 
 import numpy as np
+import OpenEXR
 import torch
 from PIL import Image
 import torch.nn.functional as F
@@ -42,10 +43,28 @@ def set_seed(seed):
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
-def load_split(data_dir, downsample, test_light=False):
-    """Loads one light group's transforms.json + PNGs, returns a list of
-    per-view dicts ready for the render/loss loop. Note: requires all images 
-    to be shot with thet same camera_angle_x"""
+def load_exr_aovs(path, downsample):
+    """Load normal and albedo AOVs from an EXR and return (normal, albedo)"""
+    exr = OpenEXR.File(path)
+    normal = albedo = None
+    for part in exr.parts:
+        if part.name() == "normal":
+            c = part.channels
+            normal = np.stack([c["normal.X"].pixels, c["normal.Y"].pixels, c["normal.Z"].pixels], axis=-1)
+        elif part.name() == "albedo":
+            albedo = part.channels["albedo"].pixels[..., :3]
+    normal_t = torch.from_numpy(normal.copy())
+    albedo_t = torch.from_numpy(albedo.copy())
+
+    if downsample > 1:
+        normal_t = F.avg_pool2d(normal_t.permute(2, 0, 1).unsqueeze(0), downsample).squeeze(0).permute(1, 2, 0)
+        normal_t = F.normalize(normal_t, p=2, dim=-1)
+        albedo_t = F.avg_pool2d(albedo_t.permute(2, 0, 1).unsqueeze(0), downsample).squeeze(0).permute(1, 2, 0)
+
+    return normal_t, albedo_t
+
+
+def load_split(data_dir, downsample, test_light=False, load_exr=False):
     subset_dir = "test" if test_light else "train"
     if test_light:
         with open(os.path.join(data_dir, subset_dir, "light5", "transforms.json")) as f:
@@ -102,7 +121,7 @@ def load_split(data_dir, downsample, test_light=False):
 
         lightcoords = light_metadata[frame["light_pos"]]["position"]
 
-        views.append({
+        view = {
             "image": img_t,
             "viewmat": viewmat,
             "lightcoords": lightcoords,
@@ -110,7 +129,16 @@ def load_split(data_dir, downsample, test_light=False):
             "width": width,
             "height": height,
             "img_name": img_name,  # e.g. "0001.png" -- used to locate the matching EXR for GT AOVs
-        })
+        }
+
+        if load_exr:
+            frame_idx = os.path.splitext(img_name)[0]  # "0001.png" -> "0001"
+            exr_path = os.path.join(data_dir, subset_dir, frame["light_pos"], "images_exr", f"suzanne{frame_idx}.exr")
+            gt_normal, gt_albedo = load_exr_aovs(exr_path, downsample)
+            view["gt_normal"] = gt_normal
+            view["gt_albedo"] = gt_albedo
+
+        views.append(view)
     return views
 
 
