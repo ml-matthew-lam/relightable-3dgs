@@ -244,6 +244,29 @@ def render_normals(params, view, device):
     )
     return render_colors[0]
 
+def render_albedo(params, view, device):
+    """Runs one forward pass through gsplat's rasterizer for a single view."""
+    means = params["means"]
+    scales = torch.exp(params["log_scales"])
+    quats = params["quats"]
+    opacities = torch.sigmoid(params["opacity_logits"])
+    albedo = torch.sigmoid(params["albedo_logits"])
+
+    # rasterization() supports batched cameras via a leading dim; we only
+    # have one camera per call, so add a size-1 batch dim and squeeze after
+    render_colors, render_alphas, _meta = rasterization(
+        means=means,
+        quats=quats,
+        scales=scales,
+        opacities=opacities,
+        colors=albedo,
+        viewmats=view["viewmat"].unsqueeze(0).to(device),
+        Ks=view["Ks"].unsqueeze(0).to(device),
+        width=view["width"],
+        height=view["height"],
+        sh_degree=None,  # no SH evaluation -- colors are used directly as final RGB
+    )
+    return render_colors[0]
 
 # ---------------------------------------------------------------------------
 # Checkpointing
