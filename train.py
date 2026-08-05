@@ -133,13 +133,16 @@ def init_gaussians(num_points, scene_extent, device):
     albedo_logits = torch.randn(num_points, 3, device=device) * 0.1
     roughness_logits = torch.zeros(num_points, 1, device=device)
 
+    light_log_intensity = torch.tensor(math.log(4.6 ** 2), device=device)
+
     params = {
         "means": means,
         "log_scales": log_scales,
         "quats": quats,
         "opacity_logits": opacity_logits,
         "albedo_logits": albedo_logits,
-        "roughness_logits": roughness_logits
+        "roughness_logits": roughness_logits,
+        "light_log_intensity": light_log_intensity,
     }
     for v in params.values():
         v.requires_grad_(True)
@@ -178,6 +181,7 @@ def make_optimizer(params):
         {"params": [params["opacity_logits"]], "lr": 5e-2, "name": "opacity_logits"},
         {"params": [params["albedo_logits"]], "lr": 2.5e-3, "name": "albedo_logits"},
         {"params": [params["roughness_logits"]], "lr": 2.5e-3, "name": "roughness_logits"},
+        {"params": [params["light_log_intensity"]], "lr": 1e-2, "name": "light_log_intensity"},
     ])
 
 
@@ -195,7 +199,8 @@ def render(params, view, lightcoords, device):
     dist_sq = (means_to_light ** 2).sum(-1, keepdim=True)  # (N,1) per-Gaussian squared distance to light
     light_dir = means_to_light / torch.sqrt(dist_sq)
     n_dot_l = F.relu((normals * light_dir).sum(-1, keepdim=True))
-    colors = torch.sigmoid(params["albedo_logits"]) * n_dot_l / dist_sq
+    intensity = torch.exp(params["light_log_intensity"])
+    colors = torch.sigmoid(params["albedo_logits"]) * n_dot_l * intensity / dist_sq
 
     # rasterization() supports batched cameras via a leading dim; we only
     # have one camera per call, so add a size-1 batch dim and squeeze after
