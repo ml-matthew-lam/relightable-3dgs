@@ -342,6 +342,30 @@ def evaluate(params, held_out_views, device):
         return total_psnr / len(held_out_views)
 
 
+def angular_error_deg(pred_normals, gt_normals):
+    cos_sim = (pred_normals * gt_normals).sum(-1).clamp(-1.0, 1.0)
+    return torch.rad2deg(torch.acos(cos_sim))
+
+
+def evaluate_aovs(params, views_with_exr, device):
+    with torch.no_grad():
+        total_albedo_l1 = 0.0
+        total_normal_error = 0.0
+        for view in views_with_exr:
+            pred_albedo = render_albedo(params, view, device)
+            pred_normal = render_normals(params, view, device) * 2 - 1  # undo the (n+1)/2 mapping applied in render_normals
+            pred_normal = F.normalize(pred_normal, p=2, dim=-1)
+
+            gt_albedo = view["gt_albedo"].to(device)
+            gt_normal = view["gt_normal"].to(device)
+            mask = gt_albedo.sum(-1) > 1e-4
+
+            total_albedo_l1 += (pred_albedo - gt_albedo).abs().sum(-1)[mask].mean().item()
+            total_normal_error += angular_error_deg(pred_normal, gt_normal)[mask].mean().item()
+        n = len(views_with_exr)
+        return total_albedo_l1 / n, total_normal_error / n
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -355,8 +379,8 @@ def main():
     random.shuffle(all_views)
     held_out_views = all_views[-args.held_out:]
     train_views = all_views[:-args.held_out]
-    # light5 views:  light direction different from any of the training images
-    test_light_views = load_split(args.data_dir, args.downsample, test_light=True)
+    # light5 views: light direction different from any of the training images
+    test_light_views = load_split(args.data_dir, args.downsample, test_light=True, load_exr=True)
     print(f"[data] {len(train_views)} train views, {len(held_out_views)} held-out training views, "
           f"{len(test_light_views)} test (light5) views")
 
@@ -388,8 +412,10 @@ def main():
         if step > 0 and step % args.eval_every == 0:
             mean_psnr = evaluate(params, held_out_views, device)
             light5_psnr = evaluate(params, test_light_views, device)
+            albedo_l1, normal_error_deg = evaluate_aovs(params, test_light_views, device)
             print(f"[eval] step {step}  held-out training PSNR={mean_psnr:.2f} dB  "
-                  f"test (light5) PSNR={light5_psnr:.2f} dB")
+                  f"test (light5) PSNR={light5_psnr:.2f} dB  "
+                  f"albedo L1={albedo_l1:.4f}  normal error={normal_error_deg:.2f} deg")
 
         if step > 0 and step % args.ckpt_every == 0:
             save_checkpoint(args.ckpt_dir, step, params, optimizer)
@@ -397,8 +423,10 @@ def main():
     save_checkpoint(args.ckpt_dir, args.iters, params, optimizer)
     final_psnr = evaluate(params, held_out_views, device)
     final_light5_psnr = evaluate(params, test_light_views, device)
+    final_albedo_l1, final_normal_error_deg = evaluate_aovs(params, test_light_views, device)
     print(f"[done] final held-out training PSNR={final_psnr:.2f} dB  "
-          f"final test (light5) PSNR={final_light5_psnr:.2f} dB")
+          f"final test (light5) PSNR={final_light5_psnr:.2f} dB  "
+          f"final albedo L1={final_albedo_l1:.4f}  final normal error={final_normal_error_deg:.2f} deg")
 
 
 if __name__ == "__main__":
