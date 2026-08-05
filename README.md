@@ -12,3 +12,4 @@ $$
 
 $$ C = \frac {k \rho} {d^2} \max(0, \mathbf n \cdot \mathbf l) $$
 
+$$ \hat x (f) = \int_{-\infty}^\infty x(t) e^{-i2\pi f t}\;\mathrm{d}t $$
