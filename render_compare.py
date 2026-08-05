@@ -1,55 +1,41 @@
 import argparse
 import os
+import random
 
 import numpy as np
 import torch
 from PIL import Image
-import OpenEXR
 
-from train import load_split, render, psnr, render_normals
+from train import load_split, load_exr_aovs, render, render_normals, render_albedo, psnr
 
 
-def load_gt_normal(data_dir, light, img_name, downsample):
-    exr_name = f"suzanne{os.path.splitext(img_name)[0]}.exr"
-    exr_path = os.path.join(data_dir, "train", f"light{light}", "images_exr", exr_name)
-    exr_file = OpenEXR.File(exr_path)
-    normal_part = next(p for p in exr_file.parts if p.name() == "normal")
-    normal = np.stack([
-        normal_part.channels["normal.X"].pixels,
-        normal_part.channels["normal.Y"].pixels,
-        normal_part.channels["normal.Z"].pixels,
-    ], axis=-1)  # (H, W, 3), roughly unit-length, world-space
-
-    if downsample > 1:
-        h, w = normal.shape[:2]
-        channels = []
-        for c in range(3):
-            img_c = Image.fromarray(normal[..., c], mode="F")
-            img_c = img_c.resize((w // downsample, h // downsample), Image.Resampling.BOX)
-            channels.append(np.array(img_c))
-        normal = np.stack(channels, axis=-1)
-
-    normal_01 = (normal+1)/2
-    return torch.from_numpy(normal_01)
+def gt_exr_path(data_dir, view):
+    frame_idx = os.path.splitext(view["img_name"])[0]  # "0001.png" -> "0001"
+    return os.path.join(data_dir, view["subset_dir"], view["light_id"], "images_exr", f"suzanne{frame_idx}.exr")
 
 
 def load_target(args, view, device):
     if args.render_type == "beauty":
         return view["image"].to(device)
-    elif args.render_type == "normals":
-        return load_gt_normal(args.data_dir, args.light, view["img_name"], args.downsample).to(device)
+    gt_normal, gt_albedo = load_exr_aovs(gt_exr_path(args.data_dir, view), args.downsample)
+    if args.render_type == "normals":
+        return ((gt_normal + 1) / 2).to(device)
+    elif args.render_type == "albedo":
+        return gt_albedo.to(device)
+
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Render + compare a checkpoint against ground truth.")
+    p = argparse.ArgumentParser()
     p.add_argument("--data_dir", type=str, default="checkered_suzanne")
-    p.add_argument("--light", type=int, default=1, choices=[1, 2, 3, 4])
-    p.add_argument("--held_out", type=int, default=15,)
+    p.add_argument("--test_light", action="store_true")    
+    p.add_argument("--held_out", type=int, default=15)
     p.add_argument("--downsample", type=int, default=2)
     p.add_argument("--ckpt", type=str, required=True)
     p.add_argument("--num_held_out", type=int, default=5)
     p.add_argument("--out_dir", type=str, default="render_compare_out")
+    p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    p.add_argument("--render_type", type=str, default="beauty")
+    p.add_argument("--render_type", type=str, default="beauty", choices=["beauty", "normals", "albedo"])
     return p.parse_args()
 
 
@@ -72,10 +58,11 @@ def save_side_by_side(pred, target, path):
 
 def main():
     args = parse_args()
+    random.seed(args.seed)
     device = torch.device(args.device)
     out_dir = args.out_dir
     os.makedirs(out_dir, exist_ok=True)
-    render_type_to_fcn = {"beauty": render, "normals": render_normals}
+    render_type_to_fcn = {"beauty": render, "normals": render_normals, "albedo": render_albedo}
     render_fcn = render_type_to_fcn[args.render_type]
 
     print(f"[load] checkpoint: {args.ckpt}")
@@ -83,29 +70,36 @@ def main():
     params = {k: v.to(device) for k, v in ckpt["params"].items()}
     print(f"[load] checkpoint was saved at step {ckpt['step']}")
 
-    all_views = load_split(args.data_dir, args.light, args.downsample)
+    all_views = load_split(args.data_dir, args.downsample, test_light=args.test_light)
+    random.shuffle(all_views)
     held_out_views = all_views[-args.held_out:]
     train_views = all_views[:-args.held_out]
 
+    def run_render(view):
+        # beauty depends on light position, whereas normals/albedo do not
+        if args.render_type == "beauty":
+            return render(params, view, view["lightcoords"], device)
+        return render_fcn(params, view, device)
+
     with torch.no_grad():
-        # One training view, for reference alongside the held-out renders below.
+        # one training view, for reference alongside the held-out renders below
         train_view = train_views[0]
-        pred = render_fcn(params, train_view, device)
+        pred = run_render(train_view)
         target = load_target(args, train_view, device)
         train_psnr = psnr(pred, target).item()
         save_side_by_side(pred, target, os.path.join(out_dir, "train_view_0000.png"))
-        print(f"[render] train view 0: PSNR={train_psnr:.2f} dB "
+        print(f"[render] train view 0 ({train_view['light_id']}): PSNR={train_psnr:.2f} dB "
               f"-> {out_dir}/train_view_0000.png")
 
         held_out_psnrs = []
         for i, view in enumerate(held_out_views[:args.num_held_out]):
-            pred = render_fcn(params, view, device)
+            pred = run_render(view)
             target = load_target(args, view, device)
             view_psnr = psnr(pred, target).item()
             held_out_psnrs.append(view_psnr)
             out_path = os.path.join(out_dir, f"held_out_view_{i:04d}.png")
             save_side_by_side(pred, target, out_path)
-            print(f"[render] held-out view {i}: PSNR={view_psnr:.2f} dB -> {out_path}")
+            print(f"[render] held-out view {i} ({view['light_id']}): PSNR={view_psnr:.2f} dB -> {out_path}")
 
     print(f"\n[summary] train view PSNR: {train_psnr:.2f} dB")
     print(f"[summary] held-out mean PSNR (this subset): {sum(held_out_psnrs) / len(held_out_psnrs):.2f} dB")

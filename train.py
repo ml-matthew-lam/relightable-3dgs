@@ -129,6 +129,8 @@ def load_split(data_dir, downsample, test_light=False, load_exr=False):
             "width": width,
             "height": height,
             "img_name": img_name,  # e.g. "0001.png" -- used to locate the matching EXR for GT AOVs
+            "light_id": frame["light_pos"],  # e.g. "light1"
+            "subset_dir": subset_dir,  # "train" or "test"
         }
 
         if load_exr:
