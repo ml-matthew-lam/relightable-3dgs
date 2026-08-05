@@ -7,6 +7,7 @@ import random
 import numpy as np
 import torch
 from PIL import Image
+import torch.nn.functional as F
 
 from gsplat import rasterization
 
@@ -17,7 +18,6 @@ from gsplat import rasterization
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--data_dir", type=str, default="checkered_suzanne")
-    p.add_argument("--light", type=int, default=1, choices=[1, 2, 3, 4])
     p.add_argument("--held_out", type=int, default=15)
     p.add_argument("--downsample", type=int, default=2)
     p.add_argument("--num_init_points", type=int, default=100000)
@@ -42,31 +42,46 @@ def set_seed(seed):
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
-def load_split(data_dir, light, downsample):
+def load_split(data_dir, downsample, test_light=False):
     """Loads one light group's transforms.json + PNGs, returns a list of
-    per-view dicts ready for the render/loss loop."""
-    light_dir = os.path.join(data_dir, "train", f"light{light}")
-    with open(os.path.join(light_dir, "transforms.json")) as f:
-        meta = json.load(f)
+    per-view dicts ready for the render/loss loop. Note: requires all images 
+    to be shot with thet same camera_angle_x"""
+    subset_dir = "test" if test_light else "train"
+    if test_light:
+        with open(os.path.join(data_dir, subset_dir, "light5", "transforms.json")) as f:
+            meta = json.load(f)
+        for frame in meta["frames"]:
+            frame["light_pos"] = "light5"
+        camera_angle_x = meta["camera_angle_x"]  # horizontal FOV in radians
+    else:
+        meta = {"frames": []}
+        camera_angle_x = None
+        for i in range(1, 5):
+            with open(os.path.join(data_dir, subset_dir, f"light{i}", "transforms.json")) as f:
+                light_meta = json.load(f)
+            for frame in light_meta["frames"]:
+                frame["light_pos"] = f"light{i}"
+            meta["frames"] += light_meta["frames"]
+            camera_angle_x = light_meta["camera_angle_x"]  # assumed to be the same across all lights 
 
-    camera_angle_x = meta["camera_angle_x"]  # horizontal FOV in radians
+    with open(os.path.join(data_dir, "light_metadata.json")) as f:
+        light_metadata = json.load(f)
 
     views = []
     for frame in meta["frames"]:
-        img_path = os.path.join(light_dir, frame["file_path"])
         # BlenderNeRF's file_path is relative and already includes the
         # extension/subfolder convention it wrote; PNGs live in images_png/
         # but file_path as stored points at e.g. "train/0001.png" -- join
-        # against light_dir and swap in the images_png subfolder.
+        # against data_dir/subset_dir/light_dir and swap in the images_png subfolder.
         img_name = os.path.basename(frame["file_path"])
-        img_path = os.path.join(light_dir, "images_png", img_name)
+        img_path = os.path.join(data_dir, subset_dir, frame["light_pos"], "images_png", img_name)
 
         img = Image.open(img_path).convert("RGB")
         if downsample > 1:
             new_size = (img.width // downsample, img.height // downsample)
-            img = img.resize(new_size, Image.Resampling.BOX)  # box filter = correct average-downsample
+            img = img.resize(new_size, Image.Resampling.BOX)
         width, height = img.size
-        img_t = torch.from_numpy(np.array(img, dtype=np.float32) / 255.0)  # HWC, [0,1]
+        img_t = torch.from_numpy(np.array(img, dtype=np.float32) / 255.0) 
 
         # --- Camera intrinsics ---
         # Pinhole model: focal length in pixels derived from horizontal FOV
@@ -85,9 +100,12 @@ def load_split(data_dir, light, downsample):
         c2w_cv = c2w_gl @ flip
         viewmat = torch.inverse(c2w_cv)
 
+        lightcoords = light_metadata[frame["light_pos"]]["position"]
+
         views.append({
             "image": img_t,
             "viewmat": viewmat,
+            "lightcoords": lightcoords,
             "Ks": Ks,
             "width": width,
             "height": height,
@@ -163,15 +181,19 @@ def make_optimizer(params):
     ])
 
 
-def render(params, view, device):
+def render(params, view, lightcoords, device):
     """Runs one forward pass through gsplat's rasterizer for a single view."""
     means = params["means"]
     scales = torch.exp(params["log_scales"])
     quats = params["quats"]
     opacities = torch.sigmoid(params["opacity_logits"])
-    colors = torch.sigmoid(params["albedo_logits"])
     camera_pos = torch.inverse(view["viewmat"])[:3, 3].to(device)
     normals = compute_normals(means, params["log_scales"], quats, camera_pos)
+
+    light_pos = torch.tensor(lightcoords, dtype=torch.float32, device=device)
+    light_dir = F.normalize(light_pos - means, p=2, dim=-1)
+    n_dot_l = F.relu((normals * light_dir).sum(-1, keepdim=True))
+    colors = torch.sigmoid(params["albedo_logits"]) * n_dot_l
 
     # rasterization() supports batched cameras via a leading dim; we only
     # have one camera per call, so add a size-1 batch dim and squeeze after
@@ -256,7 +278,7 @@ def evaluate(params, held_out_views, device):
     with torch.no_grad():
         total_psnr = 0.0
         for view in held_out_views:
-            pred = render(params, view, device)
+            pred = render(params, view, view["lightcoords"], device)
             target = view["image"].to(device)
             total_psnr += psnr(pred, target).item()
         return total_psnr / len(held_out_views)
@@ -269,9 +291,10 @@ def main():
     args = parse_args()
     set_seed(args.seed)
     device = torch.device(args.device)
-    print(f"[setup] device={device}, light=light{args.light}, iters={args.iters}")
+    print(f"[setup] device={device}, iters={args.iters}")
 
-    all_views = load_split(args.data_dir, args.light, args.downsample)
+    all_views = load_split(args.data_dir, args.downsample)
+    random.shuffle(all_views)
     held_out_views = all_views[-args.held_out:]
     train_views = all_views[:-args.held_out]
     print(f"[data] {len(train_views)} train views, {len(held_out_views)} held-out views")
@@ -289,7 +312,7 @@ def main():
 
     for step in range(start_step, args.iters):
         view = train_views[random.randrange(len(train_views))]
-        pred = render(params, view, device)
+        pred = render(params, view, view["lightcoords"], device)
         target = view["image"].to(device)
 
         loss = torch.abs(pred - target).mean()  # plain L1 (to be updated later)
