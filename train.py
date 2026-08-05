@@ -304,7 +304,10 @@ def main():
     random.shuffle(all_views)
     held_out_views = all_views[-args.held_out:]
     train_views = all_views[:-args.held_out]
-    print(f"[data] {len(train_views)} train views, {len(held_out_views)} held-out views")
+    # light5 views:  light direction different from any of the training images
+    test_light_views = load_split(args.data_dir, args.downsample, test_light=True)
+    print(f"[data] {len(train_views)} train views, {len(held_out_views)} held-out training views, "
+          f"{len(test_light_views)} test (light5) views")
 
     ckpt = load_latest_checkpoint(args.ckpt_dir, device) if args.resume else None
     if ckpt is not None:
@@ -333,14 +336,18 @@ def main():
 
         if step > 0 and step % args.eval_every == 0:
             mean_psnr = evaluate(params, held_out_views, device)
-            print(f"[eval] step {step}  held-out PSNR={mean_psnr:.2f} dB")
+            light5_psnr = evaluate(params, test_light_views, device)
+            print(f"[eval] step {step}  held-out training PSNR={mean_psnr:.2f} dB  "
+                  f"test (light5) PSNR={light5_psnr:.2f} dB")
 
         if step > 0 and step % args.ckpt_every == 0:
             save_checkpoint(args.ckpt_dir, step, params, optimizer)
 
     save_checkpoint(args.ckpt_dir, args.iters, params, optimizer)
     final_psnr = evaluate(params, held_out_views, device)
-    print(f"[done] final held-out PSNR={final_psnr:.2f} dB")
+    final_light5_psnr = evaluate(params, test_light_views, device)
+    print(f"[done] final held-out training PSNR={final_psnr:.2f} dB  "
+          f"final test (light5) PSNR={final_light5_psnr:.2f} dB")
 
 
 if __name__ == "__main__":
