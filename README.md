@@ -10,5 +10,5 @@ R = \begin{bmatrix}
     \end{bmatrix}
 $$
 
-$$ C = \rho \max(0, \mathbf n \cdot \mathbf l) $$
+$$ C = \frac {k \rho} {d^2} \max(0, \mathbf n \cdot \mathbf l) $$
 
