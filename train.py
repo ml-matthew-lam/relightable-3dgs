@@ -25,7 +25,7 @@ def parse_args():
     p.add_argument("--iters", type=int, default=15000)
     p.add_argument("--eval_every", type=int, default=500)
     p.add_argument("--ckpt_every", type=int, default=500)
-    p.add_argument("--ckpt_dir", type=str, default="checkpoints/light1_baseline")
+    p.add_argument("--ckpt_dir", type=str, default="checkpoints")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
@@ -191,9 +191,11 @@ def render(params, view, lightcoords, device):
     normals = compute_normals(means, params["log_scales"], quats, camera_pos)
 
     light_pos = torch.tensor(lightcoords, dtype=torch.float32, device=device)
-    light_dir = F.normalize(light_pos - means, p=2, dim=-1)
+    means_to_light = light_pos - means  # (N,3), raw direction -- keep before normalizing, need its length for falloff
+    dist_sq = (means_to_light ** 2).sum(-1, keepdim=True)  # (N,1) per-Gaussian squared distance to light
+    light_dir = means_to_light / torch.sqrt(dist_sq)
     n_dot_l = F.relu((normals * light_dir).sum(-1, keepdim=True))
-    colors = torch.sigmoid(params["albedo_logits"]) * n_dot_l
+    colors = torch.sigmoid(params["albedo_logits"]) * n_dot_l / dist_sq
 
     # rasterization() supports batched cameras via a leading dim; we only
     # have one camera per call, so add a size-1 batch dim and squeeze after
