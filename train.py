@@ -212,7 +212,7 @@ def make_optimizer(params):
         {"params": [params["opacity_logits"]], "lr": 5e-2, "name": "opacity_logits"},
         {"params": [params["albedo_logits"]], "lr": 2.5e-3, "name": "albedo_logits"},
         {"params": [params["roughness_logits"]], "lr": 2.5e-3, "name": "roughness_logits"},
-        {"params": [params["light_log_intensity"]], "lr": 1e-2, "name": "light_log_intensity"},
+        {"params": [params["light_log_intensity"]], "lr": 1e-4, "name": "light_log_intensity"},
     ])
 
 
