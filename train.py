@@ -344,7 +344,6 @@ def save_checkpoint(ckpt_dir, step, params, optimizers, strategy_state):
             k: (v.detach().cpu() if torch.is_tensor(v) else v) for k, v in strategy_state.items()
         },
     }, path)
-    print(f"[checkpoint] saved {path}")
 
 
 def load_latest_checkpoint(ckpt_dir, device):
