@@ -401,7 +401,9 @@ def main():
     print(f"[data] {len(train_views)} train views, {len(held_out_views)} held-out training views, "
           f"{len(test_light_views)} test (light5) views")
 
-    strategy = DefaultStrategy(verbose=True)
+    # refine_stop_iter defaults to 15000 in gsplat, but we want to set it to args.iters so
+    # densification (duplicate/split/prune) keeps running for the whole run (potentially beyond 15000)
+    strategy = DefaultStrategy(verbose=True, refine_stop_iter=args.iters)
 
     ckpt = load_latest_checkpoint(args.ckpt_dir, device) if args.resume else None
     if ckpt is not None:
