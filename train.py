@@ -155,8 +155,8 @@ def init_gaussians(num_points, scene_extent, device):
     avg_spacing = (2 * scene_extent) / (num_points ** (1 / 3))
     log_scales = torch.full((num_points, 3), math.log(avg_spacing), device=device)
 
-    quats = torch.zeros(num_points, 4, device=device)
-    quats[:, 0] = 1.0
+    quats = torch.randn(num_points, 4, device=device)
+    quats = quats / quats.norm(dim=-1, keepdim=True)
 
     init_opacity = 0.1
     opacity_logits = torch.full((num_points,), math.log(init_opacity / (1 - init_opacity)), device=device)
