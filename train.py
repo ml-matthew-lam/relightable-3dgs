@@ -346,6 +346,13 @@ def save_checkpoint(ckpt_dir, step, params, optimizers, strategy_state):
     }, path)
 
 
+def clear_checkpoints(ckpt_dir):
+    if not os.path.isdir(ckpt_dir):
+        return
+    ckpts = [f for f in os.listdir(ckpt_dir) if f.startswith("step_") and f.endswith(".pt")]
+    for f in ckpts:
+        os.remove(os.path.join(ckpt_dir, f))
+
 def load_latest_checkpoint(ckpt_dir, device):
     if not os.path.isdir(ckpt_dir):
         return None
@@ -427,6 +434,9 @@ def main():
     # refine_stop_iter defaults to 15000 in gsplat, but we want to set it to args.iters so
     # densification (duplicate/split/prune) keeps running for the whole run (potentially beyond 15000)
     strategy = DefaultStrategy(verbose=False, refine_stop_iter=args.iters)
+
+    if not args.resume:
+        clear_checkpoints(args.ckpt_dir)
 
     ckpt = load_latest_checkpoint(args.ckpt_dir, device) if args.resume else None
     if ckpt is not None:
