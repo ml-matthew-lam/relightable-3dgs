@@ -427,7 +427,7 @@ def main():
 
     # refine_stop_iter defaults to 15000 in gsplat, but we want to set it to args.iters so
     # densification (duplicate/split/prune) keeps running for the whole run (potentially beyond 15000)
-    strategy = DefaultStrategy(verbose=True, refine_stop_iter=args.iters)
+    strategy = DefaultStrategy(verbose=False, refine_stop_iter=args.iters)
 
     ckpt = load_latest_checkpoint(args.ckpt_dir, device) if args.resume else None
     if ckpt is not None:
@@ -476,17 +476,14 @@ def main():
         for opt in optimizers.values():
             opt.step()
 
-        if step % 100 == 0:
-            print(f"[train] step {step}/{args.iters}  loss={loss.item():.4f}  num_gaussians={params['means'].shape[0]}  "
-                  f"normal_smooth={normal_smooth_loss.item():.4f}  albedo_smooth={albedo_smooth_loss.item():.4f}")
-
         if step > 0 and step % args.eval_every == 0:
             mean_psnr = evaluate(params, held_out_views, device)
             light5_psnr = evaluate(params, test_light_views, device)
             albedo_l1, normal_error_deg = evaluate_aovs(params, test_light_views, device)
             print(f"[eval] step {step}  held-out training PSNR={mean_psnr:.2f} dB  "
                   f"test (light5) PSNR={light5_psnr:.2f} dB  "
-                  f"albedo L1={albedo_l1:.4f}  normal error={normal_error_deg:.2f} deg")
+                  f"albedo L1={albedo_l1:.4f}  normal error={normal_error_deg:.2f} deg  "
+                  f"num_gaussians={params['means'].shape[0]}")
 
         if step > 0 and step % args.ckpt_every == 0:
             save_checkpoint(args.ckpt_dir, step, params, optimizers, strategy_state)
@@ -497,7 +494,8 @@ def main():
     final_albedo_l1, final_normal_error_deg = evaluate_aovs(params, test_light_views, device)
     print(f"[done] final held-out training PSNR={final_psnr:.2f} dB  "
           f"final test (light5) PSNR={final_light5_psnr:.2f} dB  "
-          f"final albedo L1={final_albedo_l1:.4f}  final normal error={final_normal_error_deg:.2f} deg")
+          f"final albedo L1={final_albedo_l1:.4f}  final normal error={final_normal_error_deg:.2f} deg  "
+          f"num_gaussians={params['means'].shape[0]}")
 
 
 if __name__ == "__main__":
