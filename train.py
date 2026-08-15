@@ -9,6 +9,7 @@ import OpenEXR
 import torch
 from PIL import Image
 import torch.nn.functional as F
+from torchmetrics.image import StructuralSimilarityIndexMeasure
 
 from gsplat import rasterization
 
@@ -375,6 +376,7 @@ def main():
     args = parse_args()
     set_seed(args.seed)
     device = torch.device(args.device)
+    ssim = StructuralSimilarityIndexMeasure(data_range=1).to(device)
     print(f"[setup] device={device}, iters={args.iters}")
 
     all_views = load_split(args.data_dir, args.downsample)
@@ -402,7 +404,9 @@ def main():
         pred = render(params, view, view["lightcoords"], device)
         target = view["image"].to(device)
 
-        loss = torch.abs(pred - target).mean()  # plain L1 (to be updated later)
+        pred_reshaped = pred.permute(2, 0, 1).unsqueeze(0)
+        target_reshaped = target.permute(2, 0, 1).unsqueeze(0)
+        loss = 0.8 * torch.abs(pred - target).mean() + 0.2 * (1 - ssim(pred_reshaped, target_reshaped))
 
         optimizer.zero_grad()
         loss.backward()

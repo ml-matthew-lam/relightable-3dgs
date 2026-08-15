@@ -7,3 +7,4 @@ numpy==2.0.2
 Pillow==11.3.0
 OpenEXR==3.4.13
 PyYAML==6.0.3
+torchmetrics==1.6.1
