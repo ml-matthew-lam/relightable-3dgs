@@ -10,8 +10,12 @@ import torch
 from PIL import Image
 import torch.nn.functional as F
 from torchmetrics.image import StructuralSimilarityIndexMeasure
+from gsplat.strategy import DefaultStrategy
 
 from gsplat import rasterization
+
+
+GS_KEYS = ("means", "scales", "quats", "opacities", "albedo_logits", "roughness_logits")
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +86,7 @@ def load_split(data_dir, downsample, test_light=False, load_exr=False):
             for frame in light_meta["frames"]:
                 frame["light_pos"] = f"light{i}"
             meta["frames"] += light_meta["frames"]
-            camera_angle_x = light_meta["camera_angle_x"]  # assumed to be the same across all lights 
+            camera_angle_x = light_meta["camera_angle_x"]  # assumed to be the same across all lights
 
     with open(os.path.join(data_dir, "light_metadata.json")) as f:
         light_metadata = json.load(f)
@@ -101,7 +105,7 @@ def load_split(data_dir, downsample, test_light=False, load_exr=False):
             new_size = (img.width // downsample, img.height // downsample)
             img = img.resize(new_size, Image.Resampling.BOX)
         width, height = img.size
-        img_t = torch.from_numpy(np.array(img, dtype=np.float32) / 255.0) 
+        img_t = torch.from_numpy(np.array(img, dtype=np.float32) / 255.0)
 
         # --- Camera intrinsics ---
         # Pinhole model: focal length in pixels derived from horizontal FOV
@@ -153,13 +157,13 @@ def init_gaussians(num_points, scene_extent, device):
     means = (torch.rand(num_points, 3, device=device) * 2 - 1) * scene_extent
 
     avg_spacing = (2 * scene_extent) / (num_points ** (1 / 3))
-    log_scales = torch.full((num_points, 3), math.log(avg_spacing), device=device)
+    scales = torch.full((num_points, 3), math.log(avg_spacing), device=device)  # log-space
 
     quats = torch.randn(num_points, 4, device=device)
     quats = quats / quats.norm(dim=-1, keepdim=True)
 
     init_opacity = 0.1
-    opacity_logits = torch.full((num_points,), math.log(init_opacity / (1 - init_opacity)), device=device)
+    opacities = torch.full((num_points,), math.log(init_opacity / (1 - init_opacity)), device=device)  # logit-space
 
     albedo_logits = torch.randn(num_points, 3, device=device) * 0.1
     roughness_logits = torch.zeros(num_points, 1, device=device)
@@ -168,9 +172,9 @@ def init_gaussians(num_points, scene_extent, device):
 
     params = {
         "means": means,
-        "log_scales": log_scales,
+        "scales": scales,
         "quats": quats,
-        "opacity_logits": opacity_logits,
+        "opacities": opacities,
         "albedo_logits": albedo_logits,
         "roughness_logits": roughness_logits,
         "light_log_intensity": light_log_intensity,
@@ -180,7 +184,7 @@ def init_gaussians(num_points, scene_extent, device):
     return params
 
 # ---------------------------------------------------------------------------
-# Computation of Normals 
+# Computation of Normals
 # ---------------------------------------------------------------------------
 
 def quat_to_matrix(quats):
@@ -202,28 +206,30 @@ def compute_normals(means, log_scales, quats, camera_pos):
     flip = torch.where(flip == 0, torch.ones_like(flip), flip)
     return normals*flip
 
-def make_optimizer(params):
-    # Per-parameter learning rates following the defaults from the 
-    # original 3DGS paper by Kerbl et al.
-    return torch.optim.Adam([
-        {"params": [params["means"]], "lr": 1.6e-4, "name": "means"},
-        {"params": [params["log_scales"]], "lr": 5e-3, "name": "log_scales"},
-        {"params": [params["quats"]], "lr": 1e-3, "name": "quats"},
-        {"params": [params["opacity_logits"]], "lr": 5e-2, "name": "opacity_logits"},
-        {"params": [params["albedo_logits"]], "lr": 2.5e-3, "name": "albedo_logits"},
-        {"params": [params["roughness_logits"]], "lr": 2.5e-3, "name": "roughness_logits"},
-        {"params": [params["light_log_intensity"]], "lr": 1e-4, "name": "light_log_intensity"},
-    ])
+def make_optimizers(params):
+    # Per-parameter learning rates following the defaults from the
+    # original 3DGS paper by Kerbl et al. DefaultStrategy requires one
+    # dedicated optimizer per parameter (each with exactly one param_group),
+    # not a single combined optimizer with multiple param groups.
+    lrs = {
+        "means": 1.6e-4,
+        "scales": 5e-3,
+        "quats": 1e-3,
+        "opacities": 5e-2,
+        "albedo_logits": 2.5e-3,
+        "roughness_logits": 2.5e-3,
+        "light_log_intensity": 1e-4,
+    }
+    return {name: torch.optim.Adam([params[name]], lr=lrs[name]) for name in params}
 
 
 def render(params, view, lightcoords, device):
-    """Runs one forward pass through gsplat's rasterizer for a single view."""
     means = params["means"]
-    scales = torch.exp(params["log_scales"])
+    scales = torch.exp(params["scales"])
     quats = params["quats"]
-    opacities = torch.sigmoid(params["opacity_logits"])
+    opacities = torch.sigmoid(params["opacities"])
     camera_pos = torch.inverse(view["viewmat"])[:3, 3].to(device)
-    normals = compute_normals(means, params["log_scales"], quats, camera_pos)
+    normals = compute_normals(means, params["scales"], quats, camera_pos)
 
     light_pos = torch.tensor(lightcoords, dtype=torch.float32, device=device)
     means_to_light = light_pos - means  # (N,3), raw direction -- keep before normalizing, need its length for falloff
@@ -235,7 +241,7 @@ def render(params, view, lightcoords, device):
 
     # rasterization() supports batched cameras via a leading dim; we only
     # have one camera per call, so add a size-1 batch dim and squeeze after
-    render_colors, render_alphas, _meta = rasterization(
+    render_colors, render_alphas, info = rasterization(
         means=means,
         quats=quats,
         scales=scales,
@@ -247,16 +253,16 @@ def render(params, view, lightcoords, device):
         height=view["height"],
         sh_degree=None,  # no SH evaluation -- colors are used directly as final RGB
     )
-    return render_colors[0]
+    return render_colors[0], info
 
 def render_normals(params, view, device):
     """Runs one forward pass through gsplat's rasterizer for a single view."""
     means = params["means"]
-    scales = torch.exp(params["log_scales"])
+    scales = torch.exp(params["scales"])
     quats = params["quats"]
-    opacities = torch.sigmoid(params["opacity_logits"])
+    opacities = torch.sigmoid(params["opacities"])
     camera_pos = torch.inverse(view["viewmat"])[:3, 3].to(device)
-    normals = compute_normals(means, params["log_scales"], quats, camera_pos)
+    normals = compute_normals(means, params["scales"], quats, camera_pos)
     normal_colors = (normals+1)/2
 
     # rasterization() supports batched cameras via a leading dim; we only
@@ -278,9 +284,9 @@ def render_normals(params, view, device):
 def render_albedo(params, view, device):
     """Runs one forward pass through gsplat's rasterizer for a single view."""
     means = params["means"]
-    scales = torch.exp(params["log_scales"])
+    scales = torch.exp(params["scales"])
     quats = params["quats"]
-    opacities = torch.sigmoid(params["opacity_logits"])
+    opacities = torch.sigmoid(params["opacities"])
     albedo = torch.sigmoid(params["albedo_logits"])
 
     # rasterization() supports batched cameras via a leading dim; we only
@@ -302,13 +308,16 @@ def render_albedo(params, view, device):
 # ---------------------------------------------------------------------------
 # Checkpointing
 # ---------------------------------------------------------------------------
-def save_checkpoint(ckpt_dir, step, params, optimizer):
+def save_checkpoint(ckpt_dir, step, params, optimizers, strategy_state):
     os.makedirs(ckpt_dir, exist_ok=True)
     path = os.path.join(ckpt_dir, f"step_{step:06d}.pt")
     torch.save({
         "step": step,
         "params": {k: v.detach().cpu() for k, v in params.items()},
-        "optimizer": optimizer.state_dict(),
+        "optimizers": {name: opt.state_dict() for name, opt in optimizers.items()},
+        "strategy_state": {
+            k: (v.detach().cpu() if torch.is_tensor(v) else v) for k, v in strategy_state.items()
+        },
     }, path)
     print(f"[checkpoint] saved {path}")
 
@@ -324,6 +333,9 @@ def load_latest_checkpoint(ckpt_dir, device):
     ckpt = torch.load(path, map_location=device)
     for v in ckpt["params"].values():
         v.requires_grad_(True)
+    ckpt["strategy_state"] = {
+        k: (v.to(device) if torch.is_tensor(v) else v) for k, v in ckpt["strategy_state"].items()
+    }
     return ckpt
 
 
@@ -339,7 +351,7 @@ def evaluate(params, held_out_views, device):
     with torch.no_grad():
         total_psnr = 0.0
         for view in held_out_views:
-            pred = render(params, view, view["lightcoords"], device)
+            pred, _ = render(params, view, view["lightcoords"], device)
             target = view["image"].to(device)
             total_psnr += psnr(pred, target).item()
         return total_psnr / len(held_out_views)
@@ -388,32 +400,50 @@ def main():
     print(f"[data] {len(train_views)} train views, {len(held_out_views)} held-out training views, "
           f"{len(test_light_views)} test (light5) views")
 
+    strategy = DefaultStrategy(verbose=True)
+
     ckpt = load_latest_checkpoint(args.ckpt_dir, device) if args.resume else None
     if ckpt is not None:
         params = {k: v.to(device) for k, v in ckpt["params"].items()}
         start_step = ckpt["step"] + 1
-        optimizer = make_optimizer(params)
-        optimizer.load_state_dict(ckpt["optimizer"])
+        optimizers = make_optimizers(params)
+        for name, opt in optimizers.items():
+            opt.load_state_dict(ckpt["optimizers"][name])
+        strategy_state = ckpt["strategy_state"]
     else:
         params = init_gaussians(args.num_init_points, args.scene_extent, device)
         start_step = 0
-        optimizer = make_optimizer(params)
+        optimizers = make_optimizers(params)
+        strategy_state = strategy.initialize_state(scene_scale=args.scene_extent)
+
+    gs_optimizers = {k: optimizers[k] for k in GS_KEYS}
+    strategy.check_sanity({k: params[k] for k in GS_KEYS}, gs_optimizers)
 
     for step in range(start_step, args.iters):
         view = train_views[random.randrange(len(train_views))]
-        pred = render(params, view, view["lightcoords"], device)
+
+        for opt in optimizers.values():
+            opt.zero_grad()
+
+        pred, info = render(params, view, view["lightcoords"], device)
         target = view["image"].to(device)
+
+        gs_params = {k: params[k] for k in GS_KEYS}
+        strategy.step_pre_backward(gs_params, gs_optimizers, strategy_state, step, info)
 
         pred_reshaped = pred.permute(2, 0, 1).unsqueeze(0)
         target_reshaped = target.permute(2, 0, 1).unsqueeze(0)
         loss = 0.8 * torch.abs(pred - target).mean() + 0.2 * (1 - ssim(pred_reshaped, target_reshaped))
-
-        optimizer.zero_grad()
         loss.backward()
-        optimizer.step()
+
+        strategy.step_post_backward(gs_params, gs_optimizers, strategy_state, step, info)
+        params.update(gs_params)  # gs_params entries may have been reassigned to new (split/cloned/pruned) tensors
+
+        for opt in optimizers.values():
+            opt.step()
 
         if step % 100 == 0:
-            print(f"[train] step {step}/{args.iters}  loss={loss.item():.4f}")
+            print(f"[train] step {step}/{args.iters}  loss={loss.item():.4f}  num_gaussians={params['means'].shape[0]}")
 
         if step > 0 and step % args.eval_every == 0:
             mean_psnr = evaluate(params, held_out_views, device)
@@ -424,9 +454,9 @@ def main():
                   f"albedo L1={albedo_l1:.4f}  normal error={normal_error_deg:.2f} deg")
 
         if step > 0 and step % args.ckpt_every == 0:
-            save_checkpoint(args.ckpt_dir, step, params, optimizer)
+            save_checkpoint(args.ckpt_dir, step, params, optimizers, strategy_state)
 
-    save_checkpoint(args.ckpt_dir, args.iters, params, optimizer)
+    save_checkpoint(args.ckpt_dir, args.iters, params, optimizers, strategy_state)
     final_psnr = evaluate(params, held_out_views, device)
     final_light5_psnr = evaluate(params, test_light_views, device)
     final_albedo_l1, final_normal_error_deg = evaluate_aovs(params, test_light_views, device)

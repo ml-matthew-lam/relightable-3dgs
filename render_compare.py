@@ -78,7 +78,8 @@ def main():
     def run_render(view):
         # beauty depends on light position, whereas normals/albedo do not
         if args.render_type == "beauty":
-            return render(params, view, view["lightcoords"], device)
+            image, _info = render(params, view, view["lightcoords"], device)
+            return image
         return render_fcn(params, view, device)
 
     with torch.no_grad():
