@@ -240,7 +240,7 @@ def render(params, view, lightcoords, device):
     colors = torch.sigmoid(params["albedo_logits"]) * n_dot_l * intensity / dist_sq
 
     # rasterization() supports batched cameras via a leading dim; we only
-    # have one camera per call, so add a size-1 batch dim and squeeze after
+    # have one camera per call, so add a size-1 batch dim and squeeze after.
     render_colors, render_alphas, info = rasterization(
         means=means,
         quats=quats,
@@ -252,6 +252,7 @@ def render(params, view, lightcoords, device):
         width=view["width"],
         height=view["height"],
         sh_degree=None,  # no SH evaluation -- colors are used directly as final RGB
+        packed=False,
     )
     return render_colors[0], info
 
