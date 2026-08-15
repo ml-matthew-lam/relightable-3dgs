@@ -33,6 +33,8 @@ def parse_args():
     p.add_argument("--ckpt_every", type=int, default=500)
     p.add_argument("--ckpt_dir", type=str, default="checkpoints")
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--lambda_normal_smooth", type=float, default=0.01)
+    p.add_argument("--lambda_albedo_smooth", type=float, default=0.01)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()
@@ -205,6 +207,28 @@ def compute_normals(means, log_scales, quats, camera_pos):
     flip = torch.sign((normals*mean_to_camera).sum(-1, keepdim=True))
     flip = torch.where(flip == 0, torch.ones_like(flip), flip)
     return normals*flip
+
+def smoothness_regularizer(means, normals, albedo, sample_size=2048, k=4):
+    n = means.shape[0]
+    if n <= sample_size:
+        idx = torch.arange(n, device=means.device)
+    else:
+        idx = torch.randperm(n, device=means.device)[:sample_size]
+
+    dists = torch.cdist(means[idx], means)  # (S,N)
+    dists[torch.arange(len(idx), device=means.device), idx] = float("inf")  # exclude self
+    knn_idx = dists.topk(k, largest=False).indices  # (S,k)
+
+    sample_normals = normals[idx].unsqueeze(1)  # (S,1,3)
+    neighbor_normals = normals[knn_idx]  # (S,k,3)
+    normal_loss = (1.0 - (sample_normals * neighbor_normals).sum(-1)).mean()
+
+    sample_albedo = albedo[idx].unsqueeze(1)  # (S,1,3)
+    neighbor_albedo = albedo[knn_idx]  # (S,k,3)
+    albedo_loss = (sample_albedo - neighbor_albedo).abs().sum(-1).mean()
+
+    return normal_loss, albedo_loss
+
 
 def make_optimizers(params):
     # Per-parameter learning rates following the defaults from the
@@ -437,6 +461,13 @@ def main():
         pred_reshaped = pred.permute(2, 0, 1).unsqueeze(0)
         target_reshaped = target.permute(2, 0, 1).unsqueeze(0)
         loss = 0.8 * torch.abs(pred - target).mean() + 0.2 * (1 - ssim(pred_reshaped, target_reshaped))
+
+        camera_pos = torch.inverse(view["viewmat"])[:3, 3].to(device)
+        normals = compute_normals(params["means"], params["scales"], params["quats"], camera_pos)
+        albedo = torch.sigmoid(params["albedo_logits"])
+        normal_smooth_loss, albedo_smooth_loss = smoothness_regularizer(params["means"], normals, albedo)
+        loss = loss + args.lambda_normal_smooth * normal_smooth_loss + args.lambda_albedo_smooth * albedo_smooth_loss
+
         loss.backward()
 
         strategy.step_post_backward(gs_params, gs_optimizers, strategy_state, step, info)
@@ -446,7 +477,8 @@ def main():
             opt.step()
 
         if step % 100 == 0:
-            print(f"[train] step {step}/{args.iters}  loss={loss.item():.4f}  num_gaussians={params['means'].shape[0]}")
+            print(f"[train] step {step}/{args.iters}  loss={loss.item():.4f}  num_gaussians={params['means'].shape[0]}  "
+                  f"normal_smooth={normal_smooth_loss.item():.4f}  albedo_smooth={albedo_smooth_loss.item():.4f}")
 
         if step > 0 and step % args.eval_every == 0:
             mean_psnr = evaluate(params, held_out_views, device)
