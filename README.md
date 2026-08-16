@@ -1,6 +1,6 @@
 # Relightable 3D Gaussian Splatting
 
-
+![animation](animation.webp)
 
 ## Repository structure
 
@@ -21,6 +21,10 @@ I created a custom dataset for this project using Blender. I created it using Su
 **Step 2. Run the project in Google Colab:**
 Open [`run_project_in_colab.ipynb`](run_project_in_colab.ipynb) in Colab and follow the instructions provided in the notebook. The notebook mounts Drive, clones the repo, installs dependencies, copies the dataset locally, and runs [`train.py`](train.py), [`render_compare.py`](render_compare.py) and [`render_video.py`](render_video.py). 
 
+## Results
+**Metrics**
+**Side-by-side comparisons**
+**Pretty animation**
 
 ## Acknowledgments
 
