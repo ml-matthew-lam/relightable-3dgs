@@ -12,6 +12,7 @@
 - [`suzanne.blend`](suzanne.blend): Blender file used to generate the checkered_suzanne dataset
 
 ## About the Dataset
+I created a custom dataset for this project using Blender. I created it using Suzanne, a 3D model of a chimpanzee head, which is provided in Blender. My dataset contains 400 training images, as well as 30 test images. The training set contains images of the model captured with 4 distinct light positions. The test set contains images captured with yet another distinct light position.
 
 ## Setup and Usage
 
