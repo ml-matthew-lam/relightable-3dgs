@@ -11,8 +11,8 @@
 - [`requirements.txt`](requirements.txt)
 - [`suzanne.blend`](suzanne.blend): Blender file used to generate the checkered_suzanne dataset
 
-## About the Dataset
-I created a custom dataset for this project using Blender. I created it using Suzanne, a 3D model of a chimpanzee head, which is provided in Blender. My dataset contains 400 training images, as well as 30 test images. The training set contains images of the model captured with 4 distinct light positions. The test set contains images captured with yet another distinct light position.
+## About the *Checkered Suzanne* Dataset
+I created a custom dataset (which I call *Checkered Suzanne*) for this project using Blender. Here is the [Google Drive link](https://drive.google.com/file/d/1PFs0D2AOdhcZ-qM9OGh8_mko_RXkTnm3/view?usp=sharing) to the dataset. I created it using Suzanne, a 3D model of a chimpanzee head, which is provided in Blender. My dataset contains 400 training images, as well as 30 test images. The training set contains images of the model captured with 4 distinct light positions. The test set contains images captured with yet another distinct light position.
 
 ## Setup and Usage
 
