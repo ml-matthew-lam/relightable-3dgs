@@ -24,4 +24,4 @@ Open [`run_project_in_colab.ipynb`](run_project_in_colab.ipynb) in Colab and fol
 
 ## Acknowledgments
 
-This project uses `gsplat.rasterization` and `gsplat.strategy.DefaultStrategy` from [gsplat](https://github.com/nerfstudio-project/gsplat) (from Nerfstudio team), used as an unmodified dependency.
+This project uses `gsplat.rasterization` and `gsplat.strategy.DefaultStrategy` from [gsplat](https://github.com/nerfstudio-project/gsplat) (from the Nerfstudio team), used as an unmodified dependency.
