@@ -1,6 +1,9 @@
 # Relightable 3D Gaussian Splatting
 
-![animation](animation.webp)
+In this project, I modified a 3D Gaussian splatting pipeline to infer albedo and normals, thus allowing for rendering views under novel lighting conditions by applying a Lambertian reflectance model. I also created a custom dataset (checkered_suzanne) consisting of 400 training images and 30 test images, which I used to test and validate pipeline.
+
+
+<img src="animation.webp" width="60%">
 
 ## Repository structure
 
