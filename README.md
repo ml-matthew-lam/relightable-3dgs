@@ -26,8 +26,8 @@ Open [`run_project_in_colab.ipynb`](run_project_in_colab.ipynb) in Colab and fol
 
 ## Results
 **Metrics**
+
 **Side-by-side comparisons**
-**Pretty animation**
 
 ## Acknowledgments
 
