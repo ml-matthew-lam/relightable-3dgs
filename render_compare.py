@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from train import load_split, load_exr_aovs, render, render_normals, render_albedo, psnr
+from train import load_split, load_exr_aovs, render, render_normals, render_albedo, psnr, evaluate_aovs
 
 
 def gt_exr_path(data_dir, view):
@@ -16,12 +16,14 @@ def gt_exr_path(data_dir, view):
 
 def load_target(args, view, device):
     if args.render_type == "beauty":
-        return view["image"].to(device)
+        return view["image"].to(device), None
     gt_normal, gt_albedo = load_exr_aovs(gt_exr_path(args.data_dir, view), args.downsample)
+    mask = (gt_albedo.sum(-1) > 1e-4).to(device)
     if args.render_type == "normals":
-        return ((gt_normal + 1) / 2).to(device)
+        target = ((gt_normal + 1) / 2).to(device)
     elif args.render_type == "albedo":
-        return gt_albedo.to(device)
+        target = gt_albedo.to(device)
+    return target, mask
 
 
 def parse_args():
@@ -46,7 +48,12 @@ def to_uint8(img_tensor):
     return (arr * 255).astype(np.uint8)
 
 
-def save_side_by_side(pred, target, path):
+def save_side_by_side(pred, target, path, mask=None):
+    if mask is not None:
+        # zero out background on both sides so the saved comparison doesn't have a
+        # mismatched background encoding between the ground truth and the predicted render
+        pred = pred * mask.unsqueeze(-1)
+        target = target * mask.unsqueeze(-1)
     pred_img = Image.fromarray(to_uint8(pred))
     target_img = Image.fromarray(to_uint8(target))
     w, h = pred_img.size
@@ -86,24 +93,40 @@ def main():
         # one training view, for reference alongside the held-out renders below
         train_view = train_views[0]
         pred = run_render(train_view)
-        target = load_target(args, train_view, device)
-        train_psnr = psnr(pred, target).item()
-        save_side_by_side(pred, target, os.path.join(out_dir, "train_view_0000.png"))
+        target, mask = load_target(args, train_view, device)
+        train_psnr = psnr(pred, target, mask).item()
+        save_side_by_side(pred, target, os.path.join(out_dir, "train_view_0000.png"), mask)
         print(f"[render] train view 0 ({train_view['light_id']}): PSNR={train_psnr:.2f} dB "
               f"-> {out_dir}/train_view_0000.png")
 
         held_out_psnrs = []
         for i, view in enumerate(held_out_views[:args.num_held_out]):
             pred = run_render(view)
-            target = load_target(args, view, device)
-            view_psnr = psnr(pred, target).item()
+            target, mask = load_target(args, view, device)
+            view_psnr = psnr(pred, target, mask).item()
             held_out_psnrs.append(view_psnr)
             out_path = os.path.join(out_dir, f"held_out_view_{i:04d}.png")
-            save_side_by_side(pred, target, out_path)
+            save_side_by_side(pred, target, out_path, mask)
             print(f"[render] held-out view {i} ({view['light_id']}): PSNR={view_psnr:.2f} dB -> {out_path}")
 
     print(f"\n[summary] train view PSNR: {train_psnr:.2f} dB")
-    print(f"[summary] held-out mean PSNR (this subset): {sum(held_out_psnrs) / len(held_out_psnrs):.2f} dB")
+    print(f"[summary] held-out mean PSNR (sample of {len(held_out_psnrs)}): {sum(held_out_psnrs) / len(held_out_psnrs):.2f} dB")
+
+    # Averages over every view in this split (all 30 test-light views when --test_light is passed)
+    with torch.no_grad():
+        full_psnrs = []
+        for view in all_views:
+            pred, _info = render(params, view, view["lightcoords"], device)
+            target = view["image"].to(device)
+            full_psnrs.append(psnr(pred, target).item())  # unmasked for beauty PSNR
+
+        exr_views = load_split(args.data_dir, args.downsample, test_light=args.test_light, load_exr=True)
+        albedo_l1, normal_err_deg = evaluate_aovs(params, exr_views, device)  # masked internally by evaluate_aovs
+
+    print(f"\n[average metrics over {len(all_views)} views]")
+    print(f"  avg beauty PSNR (full frame): {sum(full_psnrs) / len(full_psnrs):.2f} dB")
+    print(f"  avg albedo L1 error (background masked): {albedo_l1:.4f}")
+    print(f"  avg normal angular error (background masked): {normal_err_deg:.2f} deg")
 
 
 if __name__ == "__main__":

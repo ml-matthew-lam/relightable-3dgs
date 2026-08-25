@@ -373,8 +373,11 @@ def load_latest_checkpoint(ckpt_dir, device):
 # ---------------------------------------------------------------------------
 # Eval
 # ---------------------------------------------------------------------------
-def psnr(pred, target):
-    mse = torch.mean((pred - target) ** 2)
+def psnr(pred, target, mask=None):
+    diff_sq = (pred - target) ** 2
+    if mask is not None:
+        diff_sq = diff_sq[mask]
+    mse = torch.mean(diff_sq)
     return -10.0 * torch.log10(mse)
 
 
