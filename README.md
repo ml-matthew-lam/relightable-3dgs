@@ -1,6 +1,8 @@
 # Relightable 3D Gaussian Splatting
 
-In this project, I modified a 3D Gaussian splatting pipeline to infer albedo and normals, thus allowing for rendering views under novel lighting conditions by applying a Lambertian reflectance model. I also created a custom dataset (checkered_suzanne) consisting of 400 training images and 30 test images, which I used to test and validate pipeline. Below is a pretty animation showing novel views under novel light source positions!
+In this project, I modified a 3D Gaussian splatting pipeline to infer albedo and normals, thus allowing for rendering views under novel lighting conditions by applying a Lambertian reflectance model. I also created a custom dataset (checkered_suzanne) consisting of 400 training images and 30 test images, which I used to test and validate pipeline. You can read more about this project on [my website](https://matthewlam.me/relightable_3dgs/)
+
+Below is a pretty animation showing novel views under novel light source positions!
 
 
 <img src="animation.webp" width="60%">
