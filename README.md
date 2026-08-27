@@ -1,6 +1,6 @@
 # Relightable 3D Gaussian Splatting
 
-In this project, I modified a 3D Gaussian splatting pipeline to infer albedo and normals, thus allowing for rendering views under novel lighting conditions by applying a Lambertian reflectance model. I also created a custom dataset (checkered_suzanne) consisting of 400 training images and 30 test images, which I used to test and validate pipeline. You can read more about this project on [my website](https://matthewlam.me/relightable_3dgs/)
+In this project, I modified a 3D Gaussian splatting pipeline to infer albedo and normals, thus allowing for rendering views under novel lighting conditions by applying a Lambertian reflectance model. I also created a custom dataset (checkered_suzanne) consisting of 400 training images and 30 test images, which I used to test and validate pipeline. You can read more about this project on [my website](https://matthewlam.me/relightable_3dgs/).
 
 Below is a pretty animation showing novel views under novel light source positions!
 
@@ -30,6 +30,7 @@ Open [`run_project_in_colab.ipynb`](run_project_in_colab.ipynb) in Colab and fol
 I trained a Gaussian model on the checkered_suzanne dataset and obtained the following results.
 
 **Side-by-side comparisons**
+
 Below are comparisons between the ground truths and predicted/inferred images/properties for views in the test set (under a novel light position). The first row is the beauty render (the actual final rendered image). The second and third rows are color maps of albedo and normals respectively.
 
 <img src="comparisons_figure.png" width="80%">
