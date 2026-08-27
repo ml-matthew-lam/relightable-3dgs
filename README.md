@@ -27,9 +27,23 @@ I created a custom dataset (which I call *checkered_suzanne*) for this project u
 Open [`run_project_in_colab.ipynb`](run_project_in_colab.ipynb) in Colab and follow the instructions provided in the notebook. The notebook mounts Drive, clones the repo, installs dependencies, copies the dataset locally, and runs [`train.py`](train.py), [`render_compare.py`](render_compare.py) and [`render_video.py`](render_video.py). 
 
 ## Results
-**Metrics**
+I trained a Gaussian model on the checkered_suzanne dataset and obtained the following results.
 
 **Side-by-side comparisons**
+Below are comparisons between the ground truths and predicted/inferred images/properties for views in the test set (under a novel light position). The first row is the beauty render (the actual final rendered image). The second and third rows are color maps of albedo and normals respectively.
+
+<img src="comparisons_figure.png" width="80%">
+
+**Metrics**
+
+The following table shows metrics indicating the accuracy of the reconstruction, calculated as average values on the test set.
+
+| Metric | Value |
+|---|---|
+| Avg beauty PSNR (full frame) | 32.53 dB |
+| Avg albedo L1 error (background masked) | 0.6821 |
+| Avg normal angular error (background masked) | 21.74 deg |
+
 
 ## Acknowledgments
 
