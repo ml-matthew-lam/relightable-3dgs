@@ -1,5 +1,7 @@
 # Relightable 3D Gaussian Splatting
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ml-matthew-lam/relightable-3dgs/blob/main/run_project_in_colab.ipynb)
+
 In this project, I modified a 3D Gaussian splatting pipeline to infer albedo and surface normals, thus allowing for rendering views under novel lighting conditions by applying a Lambertian reflectance model. I also created a custom dataset (checkered_suzanne) consisting of 400 training images and 30 test images, which I used to test and validate pipeline. You can read more about this project on [my website](https://matthewlam.me/relightable_3dgs/).
 
 Below is a pretty animation showing novel views under novel light source positions!
@@ -49,3 +51,7 @@ The following table shows metrics indicating the accuracy of the reconstruction,
 ## Acknowledgments
 
 This project uses `gsplat.rasterization` and `gsplat.strategy.DefaultStrategy` from [gsplat](https://github.com/nerfstudio-project/gsplat) (from the Nerfstudio team), used as an unmodified dependency.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
