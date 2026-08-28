@@ -37,7 +37,7 @@ Below are comparisons between the ground truths and predicted/inferred images/pr
 
 <img src="comparisons_figure.png" width="80%">
 
-**Metrics**
+**Test metrics**
 
 The following table shows metrics indicating the accuracy of the reconstruction, calculated as average values on the test set.
 
