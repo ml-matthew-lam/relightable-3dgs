@@ -45,7 +45,7 @@ The following table shows metrics indicating the accuracy of the reconstruction,
 |---|---|
 | Avg beauty PSNR (full frame) | 32.53 dB |
 | Avg albedo L1 error (background masked) | 0.6821 |
-| Avg normal angular error (background masked) | 21.74 deg |
+| Avg normal angular error (background masked) | 21.74° |
 
 
 ## Acknowledgments
